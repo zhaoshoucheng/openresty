@@ -14,7 +14,7 @@ sub split_sh_args ($);
 sub join_sh_args ($);
 sub resolve_includes ($$);
 
-our $VERSION = '0.23';
+our $VERSION = '0.27';
 
 # OpenResty's build system would patch the following line to initialize
 # the $nginx_path variable to point to the path of its own nginx binary
@@ -30,13 +30,15 @@ my $cwd;
 
 my @all_args = @ARGV;
 
-my (@http_confs, @http_includes, @main_confs, @main_includes, @shdicts, @ns, @src_a);
+my (@http_confs, @stream_confs, @http_includes, @main_confs, @main_includes,
+    @shdicts, @ns, @src_a);
 
 my $errlog_level = "warn";
-my ($use_gdb, $use_valgrind, $use_rr, $version, $gdb_opts);
+my ($use_gdb, $use_valgrind, $use_rr, $version, $gdb_opts, $user_runner);
 my ($use_stap, $stap_opts);
 my ($conns_num, @inc_dirs, $jit_dumper, $valgrind_opts, $resolve_ipv6);
 my $lua_shared_dicts = '';
+my $no_stream;
 
 {
     # Note: we do not use external modules like Getopt::Long because we want
@@ -188,6 +190,11 @@ my $lua_shared_dicts = '';
                 next;
             }
 
+            if ($arg =~ /^--stream-conf=(.*)/) {
+                push @stream_confs, $1;
+                next;
+            }
+
             if ($arg =~ /^--main-conf=(.*)/) {
                 push @main_confs, $1;
                 next;
@@ -200,6 +207,16 @@ my $lua_shared_dicts = '';
                         "found none.\n";
                 }
                 push @http_confs, $v;
+                next;
+            }
+
+            if ($arg eq '--stream-conf') {
+                my $v = shift @args;
+                if (!defined $v) {
+                    die "option --stream-conf takes an argument but ",
+                        "found none.\n";
+                }
+                push @stream_confs, $v;
                 next;
             }
 
@@ -287,6 +304,28 @@ my $lua_shared_dicts = '';
                 next;
             }
 
+            if ($arg =~ /^--user-runner=(.*)/) {
+                if (defined $user_runner) {
+                    die "ERROR: duplicate --odb options\n";
+                }
+
+                $user_runner = $1;
+                next;
+            }
+
+            if ($arg eq '--user-runner') {
+                if (defined $user_runner) {
+                    die "ERROR: duplicate --user-runner options\n";
+                }
+
+                $user_runner = shift @args;
+                if (!defined $user_runner) {
+                    die "option --user-runner takes an argument but ",
+                        "found none.\n";
+                }
+                next;
+            }
+
             if ($arg eq '--stap') {
                 $use_stap = 1;
                 next;
@@ -349,6 +388,11 @@ my $lua_shared_dicts = '';
 
             if ($arg eq '--valgrind') {
                 $use_valgrind = 1;
+                next;
+            }
+
+            if ($arg eq '--no-stream') {
+                $no_stream = 1;
                 next;
             }
 
@@ -486,6 +530,7 @@ if ($version) {
 my $lua_package_path_config = '';
 if (@inc_dirs) {
     my $package_path = "";
+    my $package_path2 = "";
     my $package_cpath = "";
     for my $dir (@inc_dirs) {
         #if (!-d $dir) {
@@ -495,10 +540,11 @@ if (@inc_dirs) {
 
         if ($is_win32) {
             $package_path .= File::Spec->catfile($dir, "?.lua;");
+            $package_path2 .= File::Spec->catfile($dir, "?/init.lua;");
             $package_cpath .= File::Spec->catfile($dir, "?.so;");
 
         } else {
-            $package_path .= "$dir/?.ljbc;$dir/?.lua;";
+            $package_path .= "$dir/?.ljbc;$dir/?.lua;$dir/?/init.ljbc;$dir/?/init.lua;";
             $package_cpath .= "$dir/?.so;";
         }
     }
@@ -601,7 +647,7 @@ if ($^O eq 'msys') {
 my $child_pid;
 
 END {
-    if (!$is_win32 && defined $prefix_dir) {
+    if (!$is_win32 && defined($child_pid) && defined $prefix_dir) {
         my $saved_status = $?;
         system("rm -rf $prefix_dir") == 0
             or warn "failed to remove temp directory $prefix_dir: $!";
@@ -655,7 +701,7 @@ _EOC_
 
 my $file_lua = '';
 if (defined $luafile) {
-    if (!-f $luafile) {
+    if (!-e $luafile) {
         die "Lua input file $luafile not found.\n";
     }
 
@@ -696,6 +742,7 @@ my $main_include_directives = resolve_includes 'main', \@main_includes;
 my $http_include_directives = resolve_includes 'http', \@http_includes;
 
 my $http_conf_lines = join "", map { "    $_\n" } @http_confs;
+my $stream_conf_lines = join "", map { "    $_\n" } @stream_confs;
 my $main_conf_lines = join "", map { "    $_\n" } @main_confs;
 
 my $conf_file;
@@ -726,6 +773,23 @@ events {
 
 $main_conf_lines
 $main_include_directives
+_EOC_
+
+if (!$no_stream) {
+    print $out <<_EOC_;
+
+stream {
+    access_log off;
+    lua_socket_log_errors off;
+    resolver @nameservers;
+    lua_regex_cache_max_entries 40960;
+$lua_package_path_config
+$stream_conf_lines
+}
+_EOC_
+}
+
+print $out <<_EOC_;
 
 http {
     access_log off;
@@ -737,6 +801,8 @@ $lua_package_path_config
 $http_conf_lines
     $http_include_directives
     init_by_lua_block {
+        ngx.config.is_console = true
+
         local stdout = io.stdout
         local ngx_null = ngx.null
         local maxn = table.maxn
@@ -782,7 +848,10 @@ $http_conf_lines
             return stdout:write(expand_table(args, true))
         end
 
+        ngx.orig_print = ngx.print
         ngx.print = output
+
+        ngx.orig_say = ngx.say
         ngx.say = function (...)
                 local ok, err = output(...)
                 if ok then
@@ -912,6 +981,10 @@ if ($use_gdb) {
     }
 
     unshift @cmd, @new;
+
+} elsif (defined $user_runner) {
+    unshift @cmd, split_sh_args $user_runner;
+    #warn "cmd: @cmd";
 }
 
 for my $sig (qw/ INT TERM QUIT HUP USR1 USR2 WINCH PIPE /) {
@@ -926,7 +999,7 @@ if (!defined $pid) {
 
 if ($pid == 0) {  # child process
     #use Data::Dumper;
-    #warn Dumper \@cmd;
+    #warn "exec ", Dumper \@cmd;
     #warn "exec [@cmd]...";
     exec(@cmd)
         or die "ERROR: failed to run command \"@cmd\": $!\n";
@@ -992,6 +1065,9 @@ Options:
     --nginx             Specify the nginx path (this option might be removed
                         in the future).
 
+    --no-stream         Disable the stream {} configuration in auto-generated
+                        nginx.conf.
+
     --ns IP             Specify a custom name server (multiple instances are
                         supported).
 
@@ -1010,6 +1086,8 @@ Options:
 
     --stap-opts OPTS
                         Pass extra systemtap command line options.
+
+    --user-runner CMD   Use CMD as user runner for the underlying nginx process.
 
     -V                  Print version numbers and nginx configurations.
 
@@ -1081,23 +1159,30 @@ sub gen_lua_code_for_args {
 
     my $luasrc = "arg = {}\n";
 
-    # args[n] (n = 0)
+    # arg[n] (n = 0)
     $luasrc .= "arg[0] = $quoted_luafile\n";
 
-    # args[n] (n > 0)
+    # arg[n] (n > 0)
     for my $i (0 .. $#user_args) {
         my $index = $i + 1;
         my $quoted_arg = quote_as_lua_str($user_args[$i]);
         $luasrc .= "arg[$index] = $quoted_arg\n";
     }
 
-    # args[n] (n < 0)
     my $left_num = $#all_args - $#user_args;
+
+=begin cmt
+
+    # arg[n] (n < 0)
     for my $i (0 .. $left_num - 2) {
         my $index = 0 - $left_num + $i + 1;
         my $quoted_arg = quote_as_lua_str($all_args[$i]);
         $luasrc .= "arg[$index] = $quoted_arg\n";
     }
+
+=end cmt
+
+=cut
 
     # args[n] (n = the index of resty-cli itself)
     my $index = 0 - $left_num;
@@ -1152,6 +1237,10 @@ sub resolve_includes ($$) {
 
 sub forward_signal {
     my $signame = shift;
+
+    if ($signame eq 'HUP') {
+        $signame = 'QUIT';
+    }
 
     if ($child_pid) {
         #warn "killing $child_pid with $signame ...\n";
