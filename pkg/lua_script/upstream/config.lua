@@ -15,10 +15,7 @@ return {
     events_shm_name = "events",
     ups_shm_name = "ups", -- for ahc data sharing
     losable_shm_name = "losable",
-
     active_health_check_idle = 3600, -- seconds
-
     health_check_concurrency = 3,
-
     max_reties = 2,
 }
