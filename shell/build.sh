@@ -48,3 +48,5 @@ cd $openrestydir
 make
 
 make install
+
+cp $DIR/pkg/nginx_conf/nginx.conf $DIR/pkg/openresty/nginx/conf/
