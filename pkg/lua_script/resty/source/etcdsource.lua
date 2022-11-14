@@ -7,6 +7,7 @@ local utils = require "resty.source.utils"
 local etcd = require "resty.etcd"
 local big_int_cmp        = utils.big_int_cmp
 local big_int_incr       = utils.big_int_incr
+local lmdb = require "resty.lmdb"
 
 local _M = { _VERSION = 0.1 }
 
@@ -49,6 +50,7 @@ local function _get_etcd_cli(self)
     return self._etcd
 end
 
+
 local function _full_sync(self)
     -- 获取客户端
     local _etcd, err = _get_etcd_cli(self)
@@ -67,19 +69,27 @@ local function _full_sync(self)
     if not resp.body.kvs or #kvs == 0 then
         return nil, "server response empty kvs"
     end
+    -- reset
+    lmdb.db_drop(true)
 
     for i = 1, #kvs do
        local kv = kvs[i]
        local obj, err = json_decode(kv.value)
        if obj then
-        -- 使用KV，这里只是打印一条
-        ngx.log(ngx.INFO, "etcd decode data key: ", kv.key," value :",obj)
+        local ok, err = lmdb.set(kv.key, kv.value)
+            if not ok then
+                ngx.log(ngx.ERR,'lmdb.set err'..err)
+            end
        end
     end
 
     local _new_revision = resp.body.header.revision
     -- 更新版本，用于增量同步
     self._etcd_revision = _new_revision
+    local ok, err = lmdb.set('__etcd_revision__', _new_revision)
+    if not ok then
+        ngx.log(ngx.ERR,'lmdb.set __etcd_revision__ err'..err)
+    end
     ngx.log(ngx.INFO, "etcd decode data revision : ", _new_revision)
     return true
 end
@@ -118,9 +128,19 @@ local function _watch_sync(self)
                 for i = 1, #resp_events do
                     local evt = resp_events[i]
                     local kv = evt.kv
+                    local is_delete = evt.type == "DELETE"
                     if kv then
-                        -- do something
-                        ngx.log(ngx.INFO, "ectd value`"..kv.key.."value"..kv.value.."`")
+                        if is_delete then
+                            local ok,err = lmdb.set(kv.key, '')
+                            if not ok then
+                                ngx.log(ngx.ERR,'lmdb.set err'..err)
+                            end
+                        else 
+                            local ok, err = lmdb.set(kv.key, kv.value)
+                            if not ok then
+                                ngx.log(ngx.ERR,'lmdb.set err'..err)
+                            end
+                        end 
                     end
                 end
             end
@@ -128,7 +148,14 @@ local function _watch_sync(self)
                 -- maintaining local revision
                 local revision = resp.result.header.revision
                 if revision then
-                    ngx.log(ngx.INFO, "ectd __etcd_revision__`"..revision.."`")
+                    local v = lmdb.get('__etcd_revision__')
+                    if not v or big_int_cmp(v, revision)  < 0 then
+                        ngx.log(ngx.INFO, "ectd __etcd_revision__`"..revision.."`")
+                        local err, ok = lmdb:set("__etcd_revision__", revision)
+                        if not ok then
+                            ngx.log(ngx.ERR,'lmdb.set __etcd_revision__ err'..err)
+                        end
+                    end
                 end
             end
         end

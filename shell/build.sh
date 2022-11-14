@@ -41,8 +41,9 @@ check_status() {
 
 openrestydir=$DIR"/openresty_src/1.19.3.1"
 otherbundles=$DIR"/other_nginx_bundles"
+lua_clibs_src=$DIR"/lua_clibs-src" 
 cd $openrestydir
-./configure --prefix=/data/pkg/openresty --user=nginx --group=nginx --with-pcre-jit --with-http_v2_module --with-http_sub_module --with-http_realip_module --with-http_stub_status_module --with-luajit --add-module=$otherbundles/nginx-sticky-module-ng  --add-module=$otherbundles/nginx_upstream_check_module --add-module=$otherbundles/ngx_stream_upstream_check_module --with-openssl=$otherbundles/openssl/$OPENSSL_VERSION --with-pcre=$otherbundles/pcre/pcre-8.40 --with-zlib=$otherbundles/zlib/zlib-1.2.10
+./configure --prefix=/data/pkg/openresty --user=nginx --group=nginx --with-pcre-jit --with-http_v2_module --with-http_sub_module --with-http_realip_module --with-http_stub_status_module --with-luajit --add-module=$lua_clibs_src/lua-resty-lmdb --add-module=$otherbundles/nginx-sticky-module-ng  --add-module=$otherbundles/nginx_upstream_check_module --add-module=$otherbundles/ngx_stream_upstream_check_module --with-openssl=$otherbundles/openssl/$OPENSSL_VERSION --with-pcre=$otherbundles/pcre/pcre-8.40 --with-zlib=$otherbundles/zlib/zlib-1.2.10 
 
 make
 
