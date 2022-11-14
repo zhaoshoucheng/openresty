@@ -5,7 +5,7 @@ relver=0
 version=${majver}.${minver}.${relver}-beta3
 abiver=5.1
 
-prefix=/data/pkg/openresty/luajit
+prefix=/data/openresty/pkg/openresty/luajit
 multilib=lib
 exec_prefix=${prefix}
 libdir=${exec_prefix}/${multilib}

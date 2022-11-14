@@ -19,7 +19,7 @@ our $VERSION = '0.27';
 # OpenResty's build system would patch the following line to initialize
 # the $nginx_path variable to point to the path of its own nginx binary
 # directly.
-my $nginx_path = '/data/pkg/openresty/nginx/sbin/nginx';
+my $nginx_path = '/data/openresty/pkg/openresty/nginx/sbin/nginx';
 
 my $WNOHANG = 1;
 
