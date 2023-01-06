@@ -2,6 +2,7 @@
 local module_name = (...):match("(.-)[^%.]+$")
 local cjson = require "cjson.safe"
 local upstream_conf = require(module_name .. "config")
+local lmdb = require "resty.lmdb"
 
 local upstream_shm = ngx.shared[upstream_conf.events_shm_name]
 local function on_init()
@@ -26,13 +27,9 @@ local function on_init_worker()
             cache_path = upstream_conf.cache_path,
             prefix = upstream_conf.watch_path,
             map_size = upstream_conf.map_size,
+            watch_path = upstream_conf.watch_path
         }
     )
-
-    local ok, err = etcd_source:init()
-    if not ok then
-        ngx.log(ngx.ERR, "failed to init obconf: "..tostring(err))
-    end
 
     -- worker init 
     local ev = require "resty.worker.events"
@@ -49,28 +46,27 @@ local function on_init_worker()
     if not events_ok then
         ngx.log(ngx.ERR, "failed to init events, err: "..tostring(err))
     end
-    local events = ev.event_list(
-        upstream_conf.watch_path, -- available as _M.events._source
-        "full_sync",                -- available as _M.events.full_sync
-    )
-    local my_callback = function(data, event, source, pid)
-        if event == events.full_sync then
-            -- do sth
-        elseif event == events.sync_keys then
-            -- do sth
-        end
-        ngx.log(ngx.INFO,"get data event: "..cjson.encode(event).."data :"..data.."pid :"..tostring(pid).." now pid: "..tostring(ngx.worker.pid()))
+
+    local ok, err = etcd_source:init()
+    if not ok then
+        ngx.log(ngx.ERR, "failed to init obconf: "..tostring(err))
     end
-    ev.register(my_callback, events._source, events.full_sync)
---    ev.register(my_callback, events._source, events.sync_keys)
 
     if is_master() then
-        local raise_event = function(p, event, data)
-            ngx.log(ngx.INFO,"master post event ")
-            return ev.post(events._source, event, data)
+
+        local ok, err = etcd_source:on_master()
+        if not ok then
+            ngx.log(ngx.ERR, "failed to init obconf: "..tostring(err))
         end
-        --raise_event(nil, events.full_sync, "test_event")
-        ngx.timer.at(0, raise_event,events.full_sync, "test_event")
+        local obj = lmdb.get("/openresty/dome/server_test1")
+        ngx.log(ngx.ERR, "/openresty/dome/server_test1 "..obj)
+
+        -- local raise_event = function(p, event, data)
+        --     ngx.log(ngx.INFO,"master post event ")
+        --     return ev.post(events._source, event, data)
+        -- end
+        -- --raise_event(nil, events.full_sync, "test_event")
+        -- ngx.timer.at(0, raise_event,events.full_sync, "test_event")
     end 
         
 end

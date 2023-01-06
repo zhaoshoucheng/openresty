@@ -8,6 +8,7 @@ local etcd = require "resty.etcd"
 local big_int_cmp        = utils.big_int_cmp
 local big_int_incr       = utils.big_int_incr
 local lmdb = require "resty.lmdb"
+local ev = require "resty.worker.events"
 
 local _M = { _VERSION = 0.1 }
 
@@ -23,6 +24,7 @@ function _M.new(opt)
         checker    = opt.checker, -- returns false when
         map_size   = opt.map_size,
         signature_key  = opt.signature_key,
+        watch_path = opt.watch_path,
         _cache     = { },
 
         _etcd_revision = "0",
@@ -198,9 +200,29 @@ local function init_sync_or_watch(p, self)
     end
 end
 
+-- full sync cache from lmdb
+local function _on_full_sync(self)
+    
+end
+
+local function _on_sync_keys(self)
+    
+end
+
+local function init(self)
+    local events = ev.event_list(
+        self.watch_path, -- available as _M.events._source
+        "full_sync",                -- available as _M.events.full_sync
+        "sync_keys"
+    )
+    ev.register(_on_full_sync, events._source, events.full_sync)
+    ev.register(_on_sync_keys, events._source, events.sync_keys)
+    return true
+end
+
 
 -- 设置初始化
-local function init(self)
+local function on_master(self)
     self._need_full_sync = true
     local __on_master = function()
         return ngx.timer.at(0, init_sync_or_watch, self)
@@ -210,5 +232,7 @@ local function init(self)
 end
 
 _M.init      = init
+_M.full_sync = _on_full_sync
+_M.on_master = on_master
 
 return _M
