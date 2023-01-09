@@ -9,6 +9,8 @@ local big_int_cmp        = utils.big_int_cmp
 local big_int_incr       = utils.big_int_incr
 local lmdb = require "resty.lmdb"
 local ev = require "resty.worker.events"
+local tbl_insert         = table.insert
+local tab_clone = table.clone2
 
 local _M = { _VERSION = 0.1 }
 
@@ -73,11 +75,13 @@ local function _full_sync(self)
     end
     -- reset
     lmdb.db_drop(true)
+    local all_path = {}
 
     for i = 1, #kvs do
        local kv = kvs[i]
        local obj, err = json_decode(kv.value)
        if obj then
+        tbl_insert(all_path, kv.key)
         local ok, err = lmdb.set(kv.key, kv.value)
             if not ok then
                 ngx.log(ngx.ERR,'lmdb.set err'..err)
@@ -93,6 +97,8 @@ local function _full_sync(self)
         ngx.log(ngx.ERR,'lmdb.set __etcd_revision__ err'..err)
     end
     ngx.log(ngx.INFO, "etcd decode data revision : ", _new_revision)
+    ev.post(self._events._source, self._events.full_sync, all_path)
+
     return true
 end
 
@@ -125,6 +131,7 @@ local function _watch_sync(self)
                 break
             end
             -- ngx.log(ngx.INFO, "watch: "..tostring(json_encode(resp)))
+            local changed_keys = {}
             local resp_events = resp.result.events
             if resp_events and #resp_events > 0 then
                 for i = 1, #resp_events do
@@ -136,11 +143,15 @@ local function _watch_sync(self)
                             local ok,err = lmdb.set(kv.key, '')
                             if not ok then
                                 ngx.log(ngx.ERR,'lmdb.set err'..err)
+                            else
+                                tbl_insert(changed_keys, kv.key)
                             end
                         else 
                             local ok, err = lmdb.set(kv.key, kv.value)
                             if not ok then
                                 ngx.log(ngx.ERR,'lmdb.set err'..err)
+                            else 
+                                tbl_insert(changed_keys, kv.key)
                             end
                         end 
                     end
@@ -159,6 +170,9 @@ local function _watch_sync(self)
                         end
                     end
                 end
+            end
+            if changed_keys.len ~= 0 then
+                ev.post(self._events._source, self._events.sync_keys, changed_keys)
             end
         end
     until err
@@ -200,13 +214,38 @@ local function init_sync_or_watch(p, self)
     end
 end
 
--- full sync cache from lmdb
-local function _on_full_sync(self)
-    
+local function _on_sync_key(self, key)
+    local v = lmdb.get(key)
+    local prefix_len = #self.prefix
+    local rkey = key:sub(prefix_len + 1)
+    if v then
+        if v == '' then
+            self._cache[rkey] = nil
+        else
+            local obj, err = json_decode(v)
+            if err then
+                ngx.log(ngx.ERR, "failed to decode when sync_key, value: "..tostring(v)..", key: "..tostring(key))
+            else
+                self._cache[rkey] = obj
+            end
+        end
+    end 
 end
 
-local function _on_sync_keys(self)
-    
+-- full sync cache from lmdb
+-- 目前_on_full_sync _on_sync_keys 都是比较粗暴的处理方式，后续需要对每一个key的version进行对比，然后在更新
+local function _on_full_sync(self, keys)
+    self._cache = {}
+    for i = 1, #keys do
+        _on_sync_key(self, keys[i])
+    end
+end
+
+
+local function _on_sync_keys(self, changed_keys)
+    for i = 1, #changed_keys do
+        _on_sync_key(self, changed_keys[i])
+    end
 end
 
 local function init(self)
@@ -215,8 +254,13 @@ local function init(self)
         "full_sync",                -- available as _M.events.full_sync
         "sync_keys"
     )
-    ev.register(_on_full_sync, events._source, events.full_sync)
-    ev.register(_on_sync_keys, events._source, events.sync_keys)
+    ev.register( function (data, event, source, pid)
+        _on_full_sync(self, data)
+    end, events._source, events.full_sync)
+    ev.register( function (data, event, source, pid)
+        _on_sync_keys(self, data)
+    end, events._source, events.sync_keys)
+    self._events = events
     return true
 end
 
@@ -231,8 +275,20 @@ local function on_master(self)
     return __on_master()
 end
 
+local function get_value(self, rkey)
+    return self._cache[rkey]
+end
+
+local function get_all(self, quick)
+    if quick then
+        return self._cache
+    end
+    return tab_clone(self._cache)
+end
+
 _M.init      = init
 _M.full_sync = _on_full_sync
 _M.on_master = on_master
-
+_M.get_value = get_value
+_M.get_all = get_all
 return _M

@@ -58,9 +58,6 @@ local function on_init_worker()
         if not ok then
             ngx.log(ngx.ERR, "failed to init obconf: "..tostring(err))
         end
-        local obj = lmdb.get("/openresty/dome/server_test1")
-        ngx.log(ngx.ERR, "/openresty/dome/server_test1 "..obj)
-
         -- local raise_event = function(p, event, data)
         --     ngx.log(ngx.INFO,"master post event ")
         --     return ev.post(events._source, event, data)
@@ -68,7 +65,12 @@ local function on_init_worker()
         -- --raise_event(nil, events.full_sync, "test_event")
         -- ngx.timer.at(0, raise_event,events.full_sync, "test_event")
     end 
-        
+    etcd_source_module = etcd_source
+    --test 
+    ngx.timer.at(2, function (p, self)
+        local obj = etcd_source_module:get_value("server_test1")
+        ngx.log(ngx.ERR, "/openresty/dome/server_test1 "..cjson.encode(obj))
+    end)
 end
 
 return {
