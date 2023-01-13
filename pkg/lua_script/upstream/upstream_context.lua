@@ -48,5 +48,41 @@ function _M.new(name, ups)
     return ret
 end
 
+local function process_upstream_nodes(nodes)
+    local ret = { }
+    for i = 1, #nodes do
+        local d = nodes[i]
+        local id = d.ip.."\0"..tostring(d.port)
+        local ew = ret[id]
+        if ew then
+            ret[id] = (d.weight or 1) + ew
+        else
+            ret[id] = d.weight or 1
+        end
+    end
+    return ret
+end
+local function get_prefered_balancer(self)
+    local b = self._prefered_balancer
+    local err = nil
+    if not b then
+        local nodes, _ = process_upstream_nodes(self._all_nodes)
+        local lb = self._ups.load_balance
+        local err
+        b, err = balancers.create(lb.type, nodes, lb.args and unpack(lb.args))
+        if not b then
+            return nil, err
+        end
+        self._prefered_balancer = b
+    end
+    return b, err
+end
+
+local function get_balancer(self)
+
+end
+
+_M.get_balancer = get_balancer
+_M.get_prefered_balancer = get_prefered_balancer
 return _M
 

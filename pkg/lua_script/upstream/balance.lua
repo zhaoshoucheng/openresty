@@ -4,6 +4,7 @@ local conf = require(module_name.."config")
 local utils = require(module_name.."utils")
 local ngx_balancer = require "ngx.balancer"
 local cjson = require "cjson.safe"
+local transform_data_simple = utils.transform_data_simple
 
 local _M = { }
 
@@ -14,35 +15,15 @@ local function get_upstream_context(name)
     local ctx = upstream_contexts[name]
     if not ctx then
         -- local ups = uupstreams:get_upstream(name)
-        local ups = obconf:get_value("core/clusters/"..name.."@lfe.cluster")
+        local ups = etcd_source_module:get_value(name)
         if not ups then
-            ups = obconf:get_value("core/clusters/"..name)
-            if not ups then
-                return nil, "upstream configure not found: "..name
-            end
+            return nil, "upstream configure not found: "..name
         end
-        ups = transform_lkfe_business_cluster(ups, all_upstream_cluster)
+        ups = transform_data_simple(ups)
         if ups then
-            local ok, err = __check_upstream_data(ups)
-            if not ok then
-                return nil, "!!! unexpected upstream config, `"..ups.name.."` new context failed, err: "..tostring(err)
-            end
-            ctx = upstream_context.new(name, ups, down_watcher, select_prefer_policy(name))
+            ctx = upstream_context.new(name, ups)
             -- upstream_contexts:set(name, ctx)
             upstream_contexts[name] = ctx
-
-            -- ctx.on_health_check_activity_changed = function(_, is_actived)
-            --     if not is_actived then
-            --         -- clean related states
-            --         if worker_sync.is_master then
-            --             if capability_mode then
-            --                 losable_shm:delete(key)
-            --             elseif losable_shm:ttl(key) == 0 then
-            --                 losable_shm:expire(key, 0.99)
-            --             end
-            --         end
-            --     end
-            -- end
         end
     end
     return ctx
@@ -53,7 +34,50 @@ function _M.do_balance(ups_name)
     local uctx, err = get_upstream_context(ups_name)
     if not uctx then
         ngx.log(ngx.ERR, ups_name..", "..tostring(err))
-        ngx_exit(502)
+        ngx.exit(502)
+        return
+    end
+
+    local b, err = uctx:get_prefered_balancer()
+    if not b then
+        ngx.log(ngx.ERR, "failed to get balancer: "..tostring(err))
+        ngx.exit(502)
+        return
+    end
+
+    local key, idx
+    local sn, sc = ngx_balancer.get_last_failure()
+    if not sn then
+        -- first call
+        local ok, err = ngx_balancer.set_more_tries(3)
+        if err and #err > 0 then
+            ngx.log(ngx.WARN, err)
+        end
+        key, idx = b:find(ctx.balance_key)
+        if not key then
+            ngx.log(ngx.ERR, "failed to get upstream endpoint")
+            ngx.exit(502)
+            return
+        end
+    else
+        key, idx = b:next(ctx.latest_idx)
+        ngx.log(ngx.WARN, "rebalancing: "..sn..", "..tostring(sc))
+    end
+
+    local peer = uctx._all_nodes[key]
+    if not peer then
+        ngx.log(ngx.ERR, "failed to get upstream endpoint: "..tostring(key))
+        ngx.exit(502)
+        return
+    end
+    ctx.latest_peer = peer
+    ctx.latest_key = key
+    ctx.latest_idx = idx
+
+    local ok, err = ngx_balancer.set_current_peer(peer.ip, peer.port)
+    if not ok then
+        ngx.log(ngx.ERR, string.format("error while setting current upstream peer %s: %s", peer.ip, err))
+        ngx.exit(500)
         return
     end
 
