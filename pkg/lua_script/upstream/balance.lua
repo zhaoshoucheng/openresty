@@ -80,5 +80,5 @@ function _M.do_balance(ups_name)
         ngx.exit(500)
         return
     end
-
 end
+return _M
