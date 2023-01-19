@@ -75,7 +75,8 @@ local function get_prefered_balancer(self)
         local nodes, _ = process_upstream_nodes(self._ups.nodes)
         local lb = self._ups.load_balance
         local err
-        b, err = balancers.create(lb.type, nodes, lb.args and unpack(lb.args))
+        --b, err = balancers.create(lb.type, nodes, lb.args and unpack(lb.args))
+        b, err = balancers.create(lb.type, nodes)
         if not b then
             return nil, err
         end
