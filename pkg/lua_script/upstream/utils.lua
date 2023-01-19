@@ -107,7 +107,7 @@ local function transform_data_simple(bc)
     return {
         edit_date = edit_date,
         load_balance = {
-            type = "roundrobin",
+            type = bc.lb_policy,
         },
         nodes = nodes,
     }
