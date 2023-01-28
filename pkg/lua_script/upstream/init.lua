@@ -3,6 +3,7 @@ local module_name = (...):match("(.-)[^%.]+$")
 local cjson = require "cjson.safe"
 local upstream_conf = require(module_name .. "config")
 local lmdb = require "resty.lmdb"
+local delegate = require "delegate"
 
 local upstream_shm = ngx.shared[upstream_conf.events_shm_name]
 local function on_init()
@@ -17,6 +18,12 @@ local function is_master()
     end
     upstream_shm:set("upstream_master","true")
     return true
+end
+local function delegate_test1(data)
+    ngx.log(ngx.INFO,"delegate_test1 "..data)
+end
+local function delegate_test2(data)
+    ngx.log(ngx.INFO,"delegate_test2 ".. data)
 end
 
 local function on_init_worker()
@@ -71,6 +78,11 @@ local function on_init_worker()
         local obj = etcd_source_module:get_value("server_test1")
         ngx.log(ngx.ERR, "/openresty/dome/server_test1 "..cjson.encode(obj))
     end)
+    -- test
+    watcher  = delegate.new()
+    watcher:add_delegate2(delegate_test1)
+    watcher:add_delegate2(delegate_test2)
+    watcher("test")
 end
 
 return {
