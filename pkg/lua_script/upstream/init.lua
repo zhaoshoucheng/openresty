@@ -4,6 +4,7 @@ local cjson = require "cjson.safe"
 local upstream_conf = require(module_name .. "config")
 local lmdb = require "resty.lmdb"
 local delegate = require "delegate"
+local down_peer_checker = require(module_name .. "down_peer_checker")
 
 local upstream_shm = ngx.shared[upstream_conf.events_shm_name]
 local function on_init()
@@ -79,10 +80,17 @@ local function on_init_worker()
         ngx.log(ngx.ERR, "/openresty/dome/server_test1 "..cjson.encode(obj))
     end)
     -- test
-    watcher  = delegate.new()
-    watcher:add_delegate2(delegate_test1)
-    watcher:add_delegate2(delegate_test2)
-    watcher("test")
+    local delegater  = delegate.new()
+    delegater:add_delegate2(delegate_test1)
+    delegater:add_delegate2(delegate_test2)
+    delegater("test")
+
+    -- test
+    ngx.timer.at(0, function (p, self)
+        local ctx = down_peer_checker.debug_ctx()
+        ngx.log(ngx.INFO,"down_peer_checker  check_peer "..tostring(down_peer_checker.check_peer(ctx)))
+    end)
+
 end
 
 return {
