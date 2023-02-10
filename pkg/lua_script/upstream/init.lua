@@ -59,21 +59,18 @@ local function on_init_worker()
     if not ok then
         ngx.log(ngx.ERR, "failed to init obconf: "..tostring(err))
     end
-
+    local master = false
     if is_master() then
 
         local ok, err = etcd_source:on_master()
         if not ok then
             ngx.log(ngx.ERR, "failed to init obconf: "..tostring(err))
         end
-        -- local raise_event = function(p, event, data)
-        --     ngx.log(ngx.INFO,"master post event ")
-        --     return ev.post(events._source, event, data)
-        -- end
-        -- --raise_event(nil, events.full_sync, "test_event")
-        -- ngx.timer.at(0, raise_event,events.full_sync, "test_event")
+        master = true
     end 
     etcd_source_module = etcd_source
+    require (module_name.."balance").init(master)
+    --[[
     --test 
     ngx.timer.at(2, function (p, self)
         local obj = etcd_source_module:get_value("server_test1")
@@ -90,7 +87,7 @@ local function on_init_worker()
         local ctx = down_peer_checker.debug_ctx()
         ngx.log(ngx.INFO,"down_peer_checker  check_peer "..tostring(down_peer_checker.check_peer(ctx)))
     end)
-
+    ]]
 end
 
 return {

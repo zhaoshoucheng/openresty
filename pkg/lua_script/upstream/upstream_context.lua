@@ -28,10 +28,14 @@ local empty_ups = {
     edit_date = 0,
 }
 local function process_upstream_nodes(nodes)
+    -- 增加down标记
     local ret = { }
     local def = { }
     for i = 1, #nodes do
         local d = nodes[i]
+        if d.state ~= 'up' then
+            goto continue
+        end
         local id = d.ip.."\0"..tostring(d.port)
         local ew = ret[id]
         if ew then
@@ -41,6 +45,7 @@ local function process_upstream_nodes(nodes)
             ret[id] = d.weight or 1
             def[id] = d
         end
+        ::continue::
     end
     return ret, def
 end
@@ -67,6 +72,31 @@ function _M.new(name, ups)
     ret._all_nodes = _all_nodes
     return ret
 end
+local function _update_node_state(self, name ,peer, status)
+    for i = 1, #self._ups.nodes do
+        local d = self._ups.nodes[i]
+        if d.ip == peer.ip or d.port == peer.port then
+            self._ups.nodes[i].state = status
+            return
+        end
+    end
+    ngx.log(ngx.ERR, "can't find peer when dpc up: "..name)
+end
+local function dpc_on_added(self, name, peer)
+    -- local sctx = _get_server_context(self, peer, true)
+    -- sctx.dpc_state = "down"
+    _update_node_state(self, name, peer, 'down')
+    local _, _all_nodes = process_upstream_nodes(self._ups.nodes)
+    self._all_nodes = _all_nodes
+end
+
+local function dpc_on_up(self, name, peer)
+    _update_node_state(self, name, peer, 'up')
+    local _, _all_nodes = process_upstream_nodes(self._ups.nodes)
+    self._all_nodes = _all_nodes
+    self._prefered_balancer = nil
+end
+
 
 local function get_prefered_balancer(self)
     local b = self._prefered_balancer
@@ -85,11 +115,8 @@ local function get_prefered_balancer(self)
     return b, err
 end
 
-local function get_balancer(self)
-
-end
-
-_M.get_balancer = get_balancer
 _M.get_prefered_balancer = get_prefered_balancer
+_M.dpc_on_added = dpc_on_added
+_M.dpc_on_up = dpc_on_up
 return _M
 
