@@ -69,6 +69,7 @@ local function on_init_worker()
         master = true
     end 
     etcd_source_module = etcd_source
+    coloring_policy = require(module_name.."traffic_policy").new()
     require (module_name.."balance").init(master)
     --[[
     --test 

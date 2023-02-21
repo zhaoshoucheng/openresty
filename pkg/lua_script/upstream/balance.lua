@@ -70,7 +70,6 @@ function _M.init(is_master)
     if is_master then
         ngx.timer.at(1, debug_down_watcher)
     end
-
 end
 
 function _M.get_down_watcher()

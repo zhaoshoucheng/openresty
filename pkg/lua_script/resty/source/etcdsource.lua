@@ -33,6 +33,10 @@ function _M.new(opt)
     }, _MT)
 end
 
+local function get_etcd_revision(self)
+    return self._etcd_revision
+end
+
 local function _get_etcd_cli(self)
     if self._etcd then
         return self._etcd
@@ -164,7 +168,7 @@ local function _watch_sync(self)
                     local v = lmdb.get('__etcd_revision__')
                     if not v or big_int_cmp(v, revision)  < 0 then
                         ngx.log(ngx.INFO, "ectd __etcd_revision__`"..revision.."`")
-                        local err, ok = lmdb:set("__etcd_revision__", revision)
+                        local ok , err = lmdb.set("__etcd_revision__", revision)
                         if not ok then
                             ngx.log(ngx.ERR,'lmdb.set __etcd_revision__ err'..err)
                         end
@@ -229,7 +233,9 @@ local function _on_sync_key(self, key)
                 self._cache[rkey] = obj
             end
         end
-    end 
+    end
+    local revision = lmdb.get('__etcd_revision__')
+    self._etcd_revision = revision
 end
 
 -- full sync cache from lmdb
@@ -279,11 +285,8 @@ local function get_value(self, rkey)
     return self._cache[rkey]
 end
 
-local function get_all(self, quick)
-    if quick then
-        return self._cache
-    end
-    return tab_clone(self._cache)
+local function get_all(self)
+    return self._cache
 end
 
 _M.init      = init
@@ -291,4 +294,5 @@ _M.full_sync = _on_full_sync
 _M.on_master = on_master
 _M.get_value = get_value
 _M.get_all = get_all
+_M.get_etcd_revision = get_etcd_revision
 return _M
