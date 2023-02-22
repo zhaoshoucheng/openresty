@@ -3,6 +3,7 @@ local module_name = (...):match("(.-)[^%.]+$")
 local utils = require(module_name.."utils")
 local config = require(module_name.."config")
 local balancers = require(module_name.."balancers")
+local traffoc_policy = require(module_name.."traffic_policy")
 local cjson = require "cjson.safe"
 
 local _M = { }
@@ -102,7 +103,8 @@ local function get_prefered_balancer(self)
     local b = self._prefered_balancer
     local err = nil
     if not b then
-        local nodes, _ = process_upstream_nodes(self._ups.nodes)
+        local ups_nodes = traffoc_policy:do_proxy(self._ups.nodes)
+        local nodes, _ = process_upstream_nodes(ups_nodes)
         local lb = self._ups.load_balance
         local err
         --b, err = balancers.create(lb.type, nodes, lb.args and unpack(lb.args))
