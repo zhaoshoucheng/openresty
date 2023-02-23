@@ -55,28 +55,6 @@ local function _get_coloring_policy(self)
     return policy
 end
 
-local function _match_rules(self,rules)
-    for i = 1, #rules do
-        local rule = rules[i]
-        local cond = rule.op
-        if not cond then
-            return nil, "invalid rule op `"..tostring(rule.op).."`"
-        end
-        if rule.type and rule.type == "headers" then
-            local headers = ngx.req.get_headers()
-            if headers[rule.key] and headers[rule.key] == rule.value then
-                return rule.actions
-            end
-        end
-        if rule.type and rule.type == "ip" then
-            if ngx.var.remote_addr == rule.value then
-                return rule.actions, ""
-            end
-        end
-        -- TODO 可以添加其他条件
-    end
-    return nil, ""
-end
 local function _get_proxy_policy(self)
     if not etcd_source_module then
         return nil
@@ -177,10 +155,6 @@ local function do_coloring(self)
     if not policy then
         return
     end
-    local actions = _match_rules(self, policy.rules)
-    if not actions then
-        return
-    end
     local parts = { }
     local rules = policy.rules
     for i = 1, #rules do
@@ -202,6 +176,7 @@ local function do_coloring(self)
             end
         end
         -- TODO 可以添加其他条件
+        local actions = rule.actions
         if _match then
             if actions.action == "set_group" then
                 ngx.req.set_header("X-Traffic-Group", actions.value)
