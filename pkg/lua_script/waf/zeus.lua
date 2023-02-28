@@ -62,8 +62,18 @@ local function on_access()
     ctx.zeus_child_id = newmsgid
     ctx.request_time = ngx.now() * 1000
 end
+
 local function _send_msg(data)
-    ngx.log(ngx.INFO,"traceID msg "..data)
+    ngx.log(ngx.INFO,"traceID msg"..data)
+
+    local producer = require "resty.kafka.producer"
+    local config = require "waf.config"
+    local bp = producer:new(config['broker_list'], { producer_type = "async" })
+    local ok, err = bp:send(config["topic"], nil, data)
+    if not ok then
+        ngx.log(ngx.ERR, "send msg to kafka err:", err)
+        return
+    end
 end
 local function _on_log()
     local ctx = ngx.ctx
