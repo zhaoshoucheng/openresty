@@ -1,6 +1,6 @@
 local _M = { }
 
-local disable_zeus = false
+local disable_trace = false
 local math_floor = math.floor
 local shm = ngx.shared.global
 local my_ip_hex = ""
@@ -15,7 +15,7 @@ end
 
 local function generate_msg_id()
     local h = math_floor(ngx.time() / 3600)
-    local key = "zeus_sn_"..h
+    local key = "trace_sn_"..h
     local sn, err = shm:incr(key, 1, 0)
     if err then
         ngx.log(ngx.ERR, err)
@@ -29,37 +29,37 @@ local function generate_msg_id()
 end
 
 local function on_access()
-    if disable_zeus then
+    if disable_trace then
         return
     end
     local req = ngx.req
     local headers = req.get_headers()
-    local rootid = headers["X-ZEUS-ROOT-ID"]
-    local parentid = headers["X-ZEUS-PARENT-ID"]
-    local msgid = headers["X-ZEUS-CHILD-ID"]
+    local traceid = headers["X-Trace-ID"]
+    local parentid = headers["X-PARENT-ID"]
+    local msgid = headers["X-CHILD-ID"]
     local newmsgid = generate_msg_id()
     if not newmsgid then
         return
     end
-    if rootid and parentid and msgid then
-        req.set_header("X-ZEUS-PARENT-ID", msgid)
-        req.set_header("X-ZEUS-CHILD-ID", newmsgid)
+    if traceid and parentid and msgid then
+        req.set_header("X-PARENT-ID", msgid)
+        req.set_header("X-CHILD-ID", newmsgid)
     else
         -- treat as new transaction
-        rootid = newmsgid
+        traceid = newmsgid
         parentid = newmsgid
         msgid = newmsgid
         newmsgid = generate_msg_id()
-        req.set_header("X-ZEUS-ROOT-ID", rootid)
-        req.set_header("X-ZEUS-PARENT-ID", parentid)
-        req.set_header("X-ZEUS-CHILD-ID", newmsgid)
+        req.set_header("X-Trace-ID", traceid)
+        req.set_header("X-PARENT-ID", parentid)
+        req.set_header("X-X-CHILD-ID", newmsgid)
     end
 
     local ctx = ngx.ctx
-    ctx.zeus_root_id = rootid
-    ctx.zeus_parent_id = parentid
-    ctx.zeus_msg_id = msgid
-    ctx.zeus_child_id = newmsgid
+    ctx.trace_id = traceid  
+    ctx.parent_id = parentid
+    ctx.msg_id = msgid
+    ctx.child_id = newmsgid
     ctx.request_time = ngx.now() * 1000
 end
 
@@ -77,14 +77,14 @@ local function _send_msg(data)
 end
 local function _on_log()
     local ctx = ngx.ctx
-    if not ctx.zeus_msg_id then
+    if not ctx.msg_id then
         return -- something goes wrong when accessing, maybe disabled, skip phase
     end
 
     local upaddr = tostring(ngx.var.upstream_addr)
-    local zeus_child_id = ctx.zeus_child_id
+    local child_id = ctx.child_id
     if not upaddr or upaddr == "nil" or upaddr == "" then
-        zeus_child_id = nil -- no proxy, clear child id
+        child_id = nil -- no proxy, clear child id
     end
 
     local response_time = ngx.var.request_time -- request processing time in seconds with a milliseconds resolution; time elapsed between the first bytes were read from the client and the log write after the last bytes were sent to the client
@@ -108,10 +108,10 @@ local function _on_log()
 
     local data, err = require "cjson.safe".encode({
         url = tostring(ngx.var.uri),
-        root_id = ctx.zeus_root_id,
-        parent_id = ctx.zeus_parent_id,
-        msg_id = ctx.zeus_msg_id,
-        child_id = zeus_child_id,
+        trace_id = ctx.trace_id,
+        parent_id = ctx.parent_id,
+        msg_id = ctx.msg_id,
+        child_id = child_id,
         request_time = ctx.request_time,
         response_time = response_time,
         host = host,
@@ -123,19 +123,19 @@ local function _on_log()
         upstream_addr = upaddr,
     })
     if err then
-        ngx.log(ngx.ERR, "zeus json encode err:", err)  
+        ngx.log(ngx.ERR, "trace json encode err:", err)  
         return  
     end
 
     local ok, err = _send_msg(data)
     if not ok then
-        ngx.log(ngx.ERR, "zeus kafka send err:", err)  
+        ngx.log(ngx.ERR, "trace kafka send err:", err)  
         return
     end 
 end
 
 local function on_log()
-    if disable_zeus then
+    if disable_trace then
         return
     end
     local ret, err = pcall(_on_log)
